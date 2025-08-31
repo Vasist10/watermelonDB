@@ -21,7 +21,7 @@ func main(){
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("File size according to Go: %d bytes\n", fileInfo.Size())//gives me 4096 even though in my pc prop it shows 8kb
+	fmt.Printf("File size according to Go: %d bytes\n", fileInfo.Size())
 
 	err = db.Put("hello", "namaste")
 	if err != nil {

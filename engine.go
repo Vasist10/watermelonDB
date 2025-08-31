@@ -41,6 +41,7 @@ type DB struct {
  }
 
 func Open(path string)(*DB,error){
+
 	f,err := os.OpenFile(path,os.O_RDWR|os.O_CREATE,0644)
 	if err != nil{
 		return nil, err
@@ -52,15 +53,77 @@ func Open(path string)(*DB,error){
 	}
 	totalPages := fileInfo.Size() / PageSize
 	
-	return &DB{
+	db:= &DB{
 		file: f,
 		index : make(map[string]RecordLocation),
 		totalPages: totalPages,
 		freelist: make([]int64,0),
-		}, nil
+	}
+	//deserialization
+	if fileInfo.Size() == 0{
+		db.totalPages = 1
+		return db,nil
+	}
+
+	metaPage, err := readPage(f,0)
+	if err != nil{
+		return nil, err
+	}
+	db.totalPages = int64(binary.LittleEndian.Uint64(metaPage.data[0:]))
+	numFreelistPages := int(binary.LittleEndian.Uint16(metaPage.data[8:]))
+	offset := 16
+	for i:=0;i<numFreelistPages;i++{
+		pageID := int64(binary.LittleEndian.Uint64(metaPage.data[offset:]))
+		db.freelist = append(db.freelist, pageID)
+		offset += 8
+	}
+	for offset < PageSize && metaPage.data[offset] != 0{
+		keyLen := int(binary.LittleEndian.Uint16(metaPage.data[offset:]))
+		offset += 2
+		key := string(metaPage.data[offset:offset+keyLen])
+		offset += keyLen
+		pageID := int64(binary.LittleEndian.Uint64(metaPage.data[offset:]))
+		offset += 8
+		pageOffset := binary.LittleEndian.Uint16(metaPage.data[offset:])
+		offset += 2
+		db.index[key] = RecordLocation{
+			PageID: pageID,
+			PageOffset: pageOffset,
+		}
+	}
+	return db, nil
 }
 
+
 func (db *DB) Close() error{
+	//Seralization
+	metaPage := &Page{id:0}
+	binary.LittleEndian.PutUint64(metaPage.data[0:], uint64(db.totalPages))
+	binary.LittleEndian.PutUint64(metaPage.data[8:], uint64(len(db.freelist)))
+
+	offset := 16
+	for _,pageID := range db.freelist{
+		binary.LittleEndian.PutUint64(metaPage.data[offset:], uint64(pageID))
+		offset += 8
+	}
+
+	for key,loc := range db.index{
+		keyLen := len(key)
+		binary.LittleEndian.PutUint16(metaPage.data[offset:], uint16(keyLen))
+		offset += 2
+
+		copy(metaPage.data[offset:],key)
+		offset += keyLen
+
+		binary.LittleEndian.PutUint64(metaPage.data[offset:], uint64(loc.PageID))
+		offset += 8
+		binary.LittleEndian.PutUint16(metaPage.data[offset:], loc.PageOffset)
+		offset += 2
+
+	}
+	if err := writePage(db.file,metaPage);err != nil{
+		return err
+	}
 	return db.file.Close()
 }
 
